@@ -3,82 +3,88 @@
 #include <stdint.h>
 #include <Eigen/Dense>
 
+
 namespace KF {
-    template<int32_t x_dim, int32_t y_dim>
+    template<int32_t x_dim, int32_t u_dim, int32_t y_dim>
     class KalmanFilter {
     public:
         KalmanFilter() = default;
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // Linear Kalman Filter
-
-        // A = state transition matrix
-        // q = process noise covariance
-        void LKF_Prediction(const Eigen::Matrix<double, x_dim, x_dim> &A, 
-                            const Eigen::Matrix<double, x_dim, x_dim> &q) 
+        void LKF(const Eigen::Vector<double, x_dim> &X_est,          // Prior state estimate
+                 const Eigen::Vector<double, u_dim> &U,              // Control input
+                 const Eigen::Vector<double, y_dim> &Y,              // Measurement vector
+                 const Eigen::Matrix<double, x_dim, x_dim> &Sigma,   // Prior covariance
+                 const Eigen::Matrix<double, x_dim, x_dim> &A,       // State transition matrix
+                 const Eigen::Matrix<double, x_dim, u_dim> &B,       // Control input matrix
+                 const Eigen::Matrix<double, y_dim, x_dim> &C,       // Measurement matrix
+                 const Eigen::Matrix<double, x_dim, x_dim> &q,       // Process noise covariance
+                 const Eigen::Matrix<double, y_dim, y_dim> &r)       // Measurement noise covariance
         {
-            X = A * X;
-            Sigma = A * Sigma * A.transpose() + q;
-        }
+            // Prediction step
+            X_p = A * X_est + B * U;                                      // Predict state
+            Sigma_p = A * Sigma * A.transpose() + q;                      // Predict covariance
 
-        // Y = measurement vector
-        // C = measurement matrix
-        // r = measurement noise covariance
-        void LKF_Correction(const Eigen::Vector<double, y_dim> &Y, 
-                            const Eigen::Matrix<double, y_dim, x_dim> &C,
-                            const Eigen::Matrix<double, y_dim, y_dim> &r) 
-        {
-            const Eigen::Matrix<double, y_dim, y_dim> S = C * Sigma * C.transpose() + r;
-            const Eigen::Matrix<double, x_dim, y_dim> K = Sigma * C.transpose() * S.inverse();
-            const Eigen::Matrix<double, x_dim, x_dim> I = Eigen::Matrix<double, x_dim, x_dim>::Identity();
+            // Correction step
+            const Eigen::Matrix<double, y_dim, y_dim> S =                 // Innovation covariance
+                    C * Sigma_p * C.transpose() + r;
 
-            X += K * (Y - C * X);
-            Sigma = (I - K * C) * Sigma;
+            const Eigen::Matrix<double, x_dim, y_dim> K =                 // Kalman gain
+                    Sigma_p * C.transpose() * S.inverse();
+
+            const Eigen::Matrix<double, x_dim, x_dim> I =                 // Identity matrix
+                    Eigen::Matrix<double, x_dim, x_dim>::Identity();
+
+            X_p1 = X_p + K * (Y - C * X_p);                               // Update state estimate
+            Sigma_p1 = (I - K * C) * Sigma_p;                             // Update covariance
         }
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // Extended Kalman Filter
-
-        // Prediction step:
-        // f = nonlinear propagation f(x)
-        // F = Jacobian of f at current estimate
-        // Q = process noise covariance
-        void EKF_Prediction(const Eigen::Vector<double, x_dim> &f, 
-                            const Eigen::Matrix<double, x_dim, x_dim> &F, 
-                            const Eigen::Matrix<double, x_dim, x_dim> &Q)
+        void EKF(const Eigen::Vector<double, x_dim> &X_est,                // Prior state estimate
+                 const Eigen::Vector<double, u_dim> &U,                    // Control input
+                 const Eigen::Vector<double, y_dim> &Y,                    // Measurement vector
+                 const Eigen::Matrix<double, x_dim, x_dim> &Sigma,         // Prior covariance
+                 const std::function<Eigen::Vector<double, x_dim>(const Eigen::Vector<double, x_dim>&, const Eigen::Vector<double, u_dim>&)> &f,  // Nonlinear state function f(x,u)
+                 const Eigen::Matrix<double, x_dim, x_dim> &F,             // Jacobian of f w.r.t. state
+                 const Eigen::Matrix<double, y_dim, x_dim> &H,             // Jacobian of measurement function h w.r.t. state
+                 const Eigen::Vector<double, y_dim> &h,                    // Predicted measurement h(x)
+                 const Eigen::Matrix<double, x_dim, x_dim> &Q,             // Process noise covariance
+                 const Eigen::Matrix<double, y_dim, y_dim> &R)             // Measurement noise covariance
         {
-            X = f;
-            Sigma = F * Sigma * F.transpose() + Q;
-        }
+            // Prediction step
+            X_p = f(X_est, U);                      // Nonlinear state prediction with control
+            Sigma_p = F * Sigma * F.transpose() + Q; // Covariance prediction
 
-        // Correction step:
-        // Y = actual measurement vector
-        // h = predicted measurement vector h(x)
-        // H = Jacobian of measurement function at current estimate
-        // R = measurement noise covariance
-        void EKF_Correction(const Eigen::Vector<double, y_dim> &Y,
-                            const Eigen::Vector<double, y_dim> &h,  
-                            const Eigen::Matrix<double, y_dim, x_dim> &H,
-                            const Eigen::Matrix<double, y_dim, y_dim> &R)
-        {
-            const Eigen::Matrix<double, y_dim, y_dim> S = H * Sigma * H.transpose() + R;
-            const Eigen::Matrix<double, x_dim, y_dim> K = Sigma * H.transpose() * S.inverse();
+            // Correction step
+            const Eigen::Matrix<double, y_dim, y_dim> S = H * Sigma_p * H.transpose() + R;  // Innovation covariance
+            const Eigen::Matrix<double, x_dim, y_dim> K = Sigma_p * H.transpose() * S.inverse();  // Kalman gain
             const Eigen::Matrix<double, x_dim, x_dim> I = Eigen::Matrix<double, x_dim, x_dim>::Identity();
 
-            X += K * (Y - h);
-            Sigma = (I - K * H) * Sigma;
+            X_p1 = X_p + K * (Y - h);             // Updated state estimate
+            Sigma_p1 = (I - K * H) * Sigma_p;     // Updated covariance
         }
 
-        Eigen::Vector<double,x_dim>& Xvec() { return X; }
-        const Eigen::Vector<double, x_dim>& Xvec() const { return X; }
 
-        Eigen::Matrix<double,x_dim,x_dim>& Sigma_mat() { return Sigma; }
-        const Eigen::Matrix<double, x_dim,x_dim>& Sigma_mat() const { return Sigma; }
+        Eigen::Vector<double,x_dim>& Xp_vec() { return X_p; }
+        const Eigen::Vector<double, x_dim>& Xp_vec() const { return X_p; }
+
+        Eigen::Matrix<double,x_dim,x_dim>& Sigmap_mat() { return Sigma_p; }
+        const Eigen::Matrix<double, x_dim,x_dim>& Sigmap_mat() const { return Sigma_p; }
+
+        Eigen::Vector<double,x_dim>& Xp1_vec() { return X_p1; }
+        const Eigen::Vector<double, x_dim>& Xp1_vec() const { return X_p1; }
+
+        Eigen::Matrix<double,x_dim,x_dim>& Sigmap1_mat() { return Sigma_p1; }
+        const Eigen::Matrix<double, x_dim,x_dim>& Sigmap1_mat() const { return Sigma_p1; }
 
     private:
-        Eigen::Vector<double, x_dim> X;                   //State Vector
-        Eigen::Matrix<double, x_dim, x_dim> Sigma;        //State Covariance Matrix
+        Eigen::Vector<double, x_dim> X_p;                   //Prediction State Vector
+        Eigen::Matrix<double, x_dim, x_dim> Sigma_p;        //Prediction State Covariance Matrix
+        Eigen::Vector<double, x_dim> X_p1;                  //Correction State Vector
+        Eigen::Matrix<double, x_dim,x_dim> Sigma_p1;        //Correction State Covariance Matrix
     };
 }
+
 #endif //KALMANFILTERS__KALMANFILTER_H
